@@ -55,6 +55,8 @@ class ObjectWaiter : public CHeapObj<mtThread> {
   bool           _is_wait;
   bool        _at_reenter;
   bool       _interrupted;
+  bool     _interruptible;
+  bool     _do_timed_park;
   bool            _active;    // Contention monitoring is enabled
  public:
   ObjectWaiter(JavaThread* current);
@@ -199,10 +201,14 @@ class ObjectMonitor : public CHeapObj<mtObjectMonitor> {
                                     // along with other fields to determine if an ObjectMonitor can be
                                     // deflated. It is also used by the async deflation protocol. See
                                     // ObjectMonitor::deflate_monitor().
+  int64_t _unmounted_vthreads;      // Number of nodes in the _entry_list associated with unmounted vthreads.
+                                    // It might be temporarily more than the actual number but never less.
+  OopHandle _object_strong;         // Used to protect object during preemption on class initialization
 
   ObjectWaiter* volatile _wait_set; // LL of threads waiting on the monitor - wait()
   volatile int  _waiters;           // number of waiting threads
   volatile int _wait_set_lock;      // protects wait set queue - simple spinlock
+  volatile int _object_strong_lock; // protects setting of _object_strong
 
   // Used in LM_LEGACY mode to store BasicLock* in case of inflation by contending thread.
   BasicLock* volatile _stack_locker;
@@ -332,6 +338,9 @@ class ObjectMonitor : public CHeapObj<mtObjectMonitor> {
   intx      recursions() const                                         { return _recursions; }
   void      set_recursions(size_t recursions);
   void      increment_recursions(JavaThread* current);
+  void      inc_unmounted_vthreads();
+  void      dec_unmounted_vthreads();
+  bool      has_unmounted_vthreads() const;
 
   // JVM/TI GetObjectMonitorUsage() needs this:
   int waiters() const;
@@ -346,6 +355,7 @@ class ObjectMonitor : public CHeapObj<mtObjectMonitor> {
   oop       object_peek() const;
   bool      object_is_dead() const;
   bool      object_refers_to(oop obj) const;
+  void      set_object_strong();
 
   // Returns true if the specified thread owns the ObjectMonitor. Otherwise
   // returns false and throws IllegalMonitorStateException (IMSE).
@@ -408,7 +418,7 @@ class ObjectMonitor : public CHeapObj<mtObjectMonitor> {
   ObjectWaiter* entry_list_tail(JavaThread* current);
 
   bool      vthread_monitor_enter(JavaThread* current, ObjectWaiter* node = nullptr);
-  void      vthread_wait(JavaThread* current, jlong millis);
+  void      vthread_wait(JavaThread* current, jlong millis, bool interruptible);
   bool      vthread_wait_reenter(JavaThread* current, ObjectWaiter* node, ContinuationWrapper& cont);
   void      vthread_epilog(JavaThread* current, ObjectWaiter* node);
 
